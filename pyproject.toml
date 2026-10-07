@@ -1,0 +1,44 @@
+[project]
+name = "deepfake-api"
+version = "0.1.0"
+description = "FastAPI service for frame-level deepfake detection (DeepfakeBench Xception)"
+requires-python = ">=3.10"
+dependencies = [
+    "fastapi>=0.110",
+    "uvicorn[standard]>=0.29",
+    "pydantic>=2.6",
+    "pydantic-settings>=2.2",
+    "python-multipart>=0.0.9",
+    "numpy>=1.26",
+    "opencv-python-headless>=4.9",
+    "torch>=2.2",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8", "httpx>=0.27", "ruff>=0.4", "mypy>=1.10"]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["app*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
+
+[tool.ruff]
+extend-exclude = ["research"]  # exploratory scripts, not production code
+line-length = 100
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP", "SIM", "RUF"]
+ignore = ["B008"]  # FastAPI's Depends()/File() defaults are idiomatic
+
+[tool.mypy]
+python_version = "3.10"
+strict = true
+ignore_missing_imports = true
+plugins = ["pydantic.mypy"]

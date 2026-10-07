@@ -1,0 +1,23 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+*.egg-info/
+
+# Local config and secrets
+.env
+
+# Large or private files: never commit these
+weights/*
+!weights/.gitkeep
+data/
+*.pth
+*.npz
+
+# Editors / OS
+.vscode/
+.idea/
+.DS_Store
