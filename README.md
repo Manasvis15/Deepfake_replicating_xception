@@ -30,7 +30,7 @@ HTTP  ─▶  api/        routes, validation, auth, error mapping, request IDs
 deepfake/
 ├── app/                     the API (production code)
 │   ├── main.py              app factory + lifespan (model loaded once at startup)
-│   ├── core/                config.py, errors.py, logging.py
+│   ├── core/                config.py, errors.py, logging.py, policy.py
 │   ├── api/                 deps.py, errors.py, middleware.py, routes/
 │   ├── services/            prediction.py: orchestration + threshold decision
 │   ├── schemas/             Pydantic response models (= the OpenAPI contract)
@@ -84,7 +84,7 @@ y ≈ −x, reproducing the paper's finding that Xception's feature space collap
 | GET | `/health/ready` | Readiness: the model is loaded (503 otherwise) |
 | POST | `/api/v1/predict` | Score one image (form field `file`) |
 | POST | `/api/v1/predict/batch` | Score several images in one forward pass (field `files`) |
-| GET | `/api/v1/model` | Model name, weights SHA-256, device, threshold |
+| GET | `/api/v1/model` | Model details, default threshold and mode presets |
 
 Interactive docs at `/docs` (disabled when `DFD_ENVIRONMENT=prod`).
 
@@ -100,8 +100,9 @@ Example response:
 ```json
 {
   "prediction": {"filename": "face.png", "label": "fake", "p_fake": 0.8137, "p_real": 0.1863},
+  "decision": {"threshold": 0.5, "mode": null, "uncertain_margin": 0.0, "tta": false},
   "model": {"name": "xception-deepfakebench", "weights_sha256": "…", "device": "cpu",
-            "input_size": 256, "threshold": 0.5},
+            "input_size": 256},
   "inference_ms": 41.7
 }
 ```
@@ -122,6 +123,32 @@ Every error has the same shape, with the request ID for tracing in the logs:
 | 503 | `model_not_ready` | model not loaded |
 | 500 | `internal_error` | unexpected failure (details logged, never returned) |
 
+## Decision filters
+
+Both prediction endpoints accept these optional query parameters. They change only how
+the label is decided, never `p_fake` itself, and every response echoes them back in
+`decision` so a label can always be interpreted.
+
+| Parameter | Values | Effect |
+|---|---|---|
+| `threshold` | 0 to 1 | P(fake) at or above this is labelled `fake` (default `DFD_THRESHOLD`) |
+| `mode` | `balanced`, `high_recall`, `high_precision` | named operating point; use instead of `threshold` |
+| `uncertain_margin` | 0 to 0.5 | scores within ± this of the threshold are labelled `uncertain` |
+| `tta` | `true` / `false` | average the score with the mirrored image (about 2× the compute) |
+
+```bash
+# Flag only confident fakes, and mark close calls for human review
+curl -F "file=@face.png;type=image/png" \
+  "localhost:8000/api/v1/predict?mode=high_precision&uncertain_margin=0.1"
+```
+
+- **Modes** are server-side presets (`DFD_MODE_THRESHOLDS`). Clients pick an intent and
+  the thresholds can be recalibrated centrally. `balanced` (0.45) is the best threshold
+  from our ROC curve; `high_recall` and `high_precision` are starting points to calibrate.
+- **`uncertain`** exists because scores near the threshold are where this model is least
+  reliable (see `plots/1_score_histogram.png`); those cases are better sent to a person.
+- Sending both `threshold` and `mode` is rejected with `422 invalid_parameter`.
+
 ## Configuration
 
 All settings are environment variables with the `DFD_` prefix (or a `.env` file).
@@ -131,7 +158,8 @@ See `.env.example`. The main ones:
 |---|---|---|
 | `DFD_WEIGHTS_PATH` | `weights/xception_best.pth` | checkpoint location |
 | `DFD_DEVICE` | `auto` | `auto`, `cpu` or `cuda` |
-| `DFD_THRESHOLD` | `0.5` | P(fake) at or above this → `fake` |
+| `DFD_THRESHOLD` | `0.5` | default threshold when a request sets neither `threshold` nor `mode` |
+| `DFD_MODE_THRESHOLDS` | `{"balanced": 0.45, "high_recall": 0.25, "high_precision": 0.8}` | threshold behind each `mode` (JSON) |
 | `DFD_MAX_CONCURRENT_INFERENCES` | `2` | forward passes allowed at once (memory guard) |
 | `DFD_MAX_UPLOAD_BYTES` | `10485760` | per-file size limit |
 | `DFD_MAX_BATCH_FILES` | `16` | files per batch request |
@@ -140,7 +168,7 @@ See `.env.example`. The main ones:
 ## Development
 
 ```bash
-make test        # 31 tests (the 5 model tests need torch)
+make test        # 56 tests (the 5 model tests need torch)
 make lint        # ruff
 make format
 make typecheck   # mypy (strict)

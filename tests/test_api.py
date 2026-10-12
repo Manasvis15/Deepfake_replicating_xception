@@ -41,7 +41,12 @@ def test_predict_labels(client: TestClient, pixel: int, label: str) -> None:
     assert body["prediction"]["label"] == label
     assert body["prediction"]["filename"] == "face.png"
     assert body["prediction"]["p_fake"] + body["prediction"]["p_real"] == pytest.approx(1.0)
-    assert body["model"]["threshold"] == 0.5
+    assert body["decision"] == {
+        "threshold": 0.5,
+        "mode": None,
+        "uncertain_margin": 0.0,
+        "tta": False,
+    }
     assert len(body["model"]["weights_sha256"]) == 64
 
 
@@ -126,7 +131,14 @@ def test_batch_reports_which_file_is_bad(client: TestClient) -> None:
 def test_model_info(client: TestClient) -> None:
     r = client.get("/api/v1/model")
     assert r.status_code == 200
-    assert r.json()["name"] == "fake"
+    body = r.json()
+    assert body["name"] == "fake"
+    assert body["default_threshold"] == 0.5
+    assert body["mode_thresholds"] == {
+        "balanced": 0.45,
+        "high_recall": 0.25,
+        "high_precision": 0.8,
+    }
 
 
 def test_request_id_generated_and_echoed(client: TestClient) -> None:

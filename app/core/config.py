@@ -4,8 +4,10 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Literal
 
-from pydantic import Field, SecretStr
+from pydantic import Field, SecretStr, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+from app.core.policy import Mode
 
 
 class Settings(BaseSettings):
@@ -24,7 +26,12 @@ class Settings(BaseSettings):
     weights_path: Path = Path("weights/xception_best.pth")
     device: Literal["auto", "cpu", "cuda"] = "auto"
     input_size: int = Field(256, gt=0)
-    threshold: float = Field(0.5, ge=0.0, le=1.0)
+    threshold: float = Field(0.5, ge=0.0, le=1.0)  # used when a request sets neither
+    # Thresholds behind each `mode`. Choose them from your own ROC curve: "balanced" is
+    # the best threshold from our evaluation; the other two are starting points.
+    mode_thresholds: dict[str, float] = Field(
+        default_factory=lambda: {"balanced": 0.45, "high_recall": 0.25, "high_precision": 0.8}
+    )
     batch_size: int = Field(16, gt=0)
     max_concurrent_inferences: int = Field(2, gt=0)
     load_model_on_startup: bool = True
@@ -35,6 +42,16 @@ class Settings(BaseSettings):
     allowed_content_types: frozenset[str] = frozenset(
         {"image/jpeg", "image/png", "image/webp", "image/bmp"}
     )
+
+    @field_validator("mode_thresholds")
+    @classmethod
+    def _check_mode_thresholds(cls, value: dict[str, float]) -> dict[str, float]:
+        expected = {m.value for m in Mode}
+        if set(value) != expected:
+            raise ValueError(f"mode_thresholds must define exactly {sorted(expected)}")
+        if not all(0.0 <= t <= 1.0 for t in value.values()):
+            raise ValueError("mode thresholds must be between 0 and 1")
+        return value
 
 
 @lru_cache

@@ -6,7 +6,7 @@ from typing import Annotated, Any
 from fastapi import APIRouter, File, UploadFile
 from starlette.concurrency import run_in_threadpool
 
-from app.api.deps import DetectorDep, PredictionServiceDep, SettingsDep
+from app.api.deps import DecisionPolicyDep, DetectorDep, PredictionServiceDep, SettingsDep
 from app.core.config import Settings
 from app.core.errors import (
     InvalidImageError,
@@ -14,11 +14,13 @@ from app.core.errors import (
     TooManyFilesError,
     UnsupportedMediaTypeError,
 )
+from app.core.policy import DecisionPolicy
 from app.ml.base import Detector
 from app.schemas.prediction import (
     BatchPredictResponse,
+    DecisionApplied,
     ErrorResponse,
-    Label,
+    ModelDetails,
     ModelInfo,
     Prediction,
     PredictResponse,
@@ -55,20 +57,28 @@ async def _read_upload(file: UploadFile, settings: Settings) -> ImageInput:
 def _to_schema(image: ScoredImage) -> Prediction:
     return Prediction(
         filename=image.filename,
-        label=Label.FAKE if image.is_fake else Label.REAL,
+        label=image.label,
         p_fake=round(image.p_fake, 6),
         p_real=round(image.p_real, 6),
     )
 
 
-def _model_info(detector: Detector, threshold: float) -> ModelInfo:
+def _model_info(detector: Detector) -> ModelInfo:
     info = detector.info
     return ModelInfo(
         name=info.name,
         weights_sha256=info.weights_sha256,
         device=info.device,
         input_size=info.input_size,
-        threshold=threshold,
+    )
+
+
+def _decision(policy: DecisionPolicy) -> DecisionApplied:
+    return DecisionApplied(
+        threshold=policy.threshold,
+        mode=policy.mode,
+        uncertain_margin=policy.uncertain_margin,
+        tta=policy.tta,
     )
 
 
@@ -76,15 +86,18 @@ def _model_info(detector: Detector, threshold: float) -> ModelInfo:
 async def predict(
     file: Annotated[UploadFile, File(description="A face-crop image (JPEG/PNG/WebP/BMP).")],
     service: PredictionServiceDep,
+    policy: DecisionPolicyDep,
     detector: DetectorDep,
     settings: SettingsDep,
 ) -> PredictResponse:
-    """Score one face image. Returns P(fake), P(real) and the thresholded label."""
+    """Score one face image. Returns P(fake), P(real) and a label decided by the
+    request's `threshold` or `mode`, optional `uncertain_margin`, and optional `tta`."""
     item = await _read_upload(file, settings)
-    result = await run_in_threadpool(service.predict, [item])
+    result = await run_in_threadpool(service.predict, [item], policy)
     return PredictResponse(
         prediction=_to_schema(result.images[0]),
-        model=_model_info(detector, service.threshold),
+        decision=_decision(policy),
+        model=_model_info(detector),
         inference_ms=result.inference_ms,
     )
 
@@ -93,6 +106,7 @@ async def predict(
 async def predict_batch(
     files: Annotated[list[UploadFile], File(description="Several face-crop images.")],
     service: PredictionServiceDep,
+    policy: DecisionPolicyDep,
     detector: DetectorDep,
     settings: SettingsDep,
 ) -> BatchPredictResponse:
@@ -103,15 +117,20 @@ async def predict_batch(
             details={"received": len(files), "max": settings.max_batch_files},
         )
     items = [await _read_upload(f, settings) for f in files]
-    result = await run_in_threadpool(service.predict, items)
+    result = await run_in_threadpool(service.predict, items, policy)
     return BatchPredictResponse(
         predictions=[_to_schema(img) for img in result.images],
-        model=_model_info(detector, service.threshold),
+        decision=_decision(policy),
+        model=_model_info(detector),
         inference_ms=result.inference_ms,
     )
 
 
-@router.get("/model", response_model=ModelInfo, responses=ERROR_RESPONSES)
-def model_info(detector: DetectorDep, settings: SettingsDep) -> ModelInfo:
-    """Which model and weights are serving, on what device, with what threshold."""
-    return _model_info(detector, settings.threshold)
+@router.get("/model", response_model=ModelDetails, responses=ERROR_RESPONSES)
+def model_info(detector: DetectorDep, settings: SettingsDep) -> ModelDetails:
+    """Which model and weights are serving, the default threshold, and the presets."""
+    return ModelDetails(
+        **_model_info(detector).model_dump(),
+        default_threshold=settings.threshold,
+        mode_thresholds=settings.mode_thresholds,
+    )

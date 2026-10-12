@@ -17,6 +17,7 @@ STATUS_BY_ERROR: dict[type[e.AppError], int] = {
     # Plain integers: Starlette has renamed some status constants between versions.
     e.InvalidImageError: 422,
     e.TooManyFilesError: 422,
+    e.InvalidParameterError: 422,
     e.UnsupportedMediaTypeError: 415,
     e.PayloadTooLargeError: 413,
     e.UnauthorizedError: 401,

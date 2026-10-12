@@ -36,5 +36,9 @@ class ModelLoadError(AppError):
     code = "model_load_error"
 
 
+class InvalidParameterError(AppError):
+    code = "invalid_parameter"
+
+
 class UnauthorizedError(AppError):
     code = "unauthorized"

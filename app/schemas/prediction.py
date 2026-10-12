@@ -1,14 +1,10 @@
 """Public API contract. These models define (and document, via OpenAPI) every response."""
 
-from enum import Enum
 from typing import Any
 
 from pydantic import BaseModel, Field
 
-
-class Label(str, Enum):
-    REAL = "real"
-    FAKE = "fake"
+from app.core.policy import Label, Mode
 
 
 class ModelInfo(BaseModel):
@@ -16,7 +12,20 @@ class ModelInfo(BaseModel):
     weights_sha256: str = Field(description="Identifies exactly which weights produced a result.")
     device: str
     input_size: int
+
+
+class ModelDetails(ModelInfo):
+    default_threshold: float = Field(description="Used when a request sets no threshold/mode.")
+    mode_thresholds: dict[Mode, float] = Field(description="Threshold behind each `mode`.")
+
+
+class DecisionApplied(BaseModel):
+    """Echoes how the label was decided, so a result can always be interpreted."""
+
     threshold: float
+    mode: Mode | None
+    uncertain_margin: float
+    tta: bool
 
 
 class Prediction(BaseModel):
@@ -28,12 +37,14 @@ class Prediction(BaseModel):
 
 class PredictResponse(BaseModel):
     prediction: Prediction
+    decision: DecisionApplied
     model: ModelInfo
     inference_ms: float
 
 
 class BatchPredictResponse(BaseModel):
     predictions: list[Prediction]
+    decision: DecisionApplied
     model: ModelInfo
     inference_ms: float
 
